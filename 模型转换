@@ -1,0 +1,173 @@
+linux 环境
+
+1、查看pb结构
+bazel-bin/tensorflow/tools/graph_transforms/summarize_graph --in_graph=tmp/frozen_model.pb
+
+2、inceptionV3  float.pb  转 
+  --input_file=/tmp/some_quantized_graph.pb \
+  --output_file=/tmp/foo.tflite \
+  --input_format=TENSORFLOW_GRAPHDEF \
+  --output_format=TFLITE \
+  --inference_type=QUANTIZED_UINT8 \
+  --input_shape=1,128,128,3 \
+  --input_array=input \
+  --output_array=MobilenetV1/Predictions/Reshape_1 \
+  --mean_value=128 \
+  --std_value=127
+  
+  toco \
+  --input_file=tmp/classify_image_graph_def.pb\
+  --output_file=tmp/classify_image_graph_def.lite  \
+  --input_format=TENSORFLOW_GRAPHDEF \
+  --output_format=TFLITE \
+  --inference_type=QUANTIZED_UINT8 \
+  --input_shape=1,224,224,3 \
+  --input_array=input \
+  --output_array=final_result \
+  --mean_value=127.5 \
+  --std_value=127.5
+  
+  量化pb -->量化lite
+  bazel run --config=opt \
+  //tensorflow/contrib/lite/toco:toco -- \
+
+  toco\
+  bazel run --config=opt \
+  //tensorflow/contrib/lite/toco:toco -- \
+  --input_file=/home/ryan/Documents/workspace/tensorflow/tensorflow/tmp/frozen_graph.pb \
+  --output_file=/home/ryan/Documents/workspace/tensorflow/tensorflow/tmp/frozen_graph.tflite \
+  --input_format=TENSORFLOW_GRAPHDEF \
+  --output_format=TFLITE \
+  --inference_type=QUANTIZED_UINT8  \
+  --input_shape=1,224,224,3 \
+  --input_array=input \
+  --output_array=MobilenetV1/Predictions/Reshape_1  \
+  --mean_value=128 \
+  --std_value=128
+
+3、pb -->虚拟量化 lite
+bazel run --config=opt \
+  //tensorflow/contrib/lite/toco:toco -- \
+  --input_file=tmp/mobilenet.pb \
+  --output_file=tmp/quantized_mobilenet.tflite \
+  --input_format=TENSORFLOW_GRAPHDEF \
+  --output_format=TFLITE \
+  --inference_type=QUANTIZED_UINT8 \
+  --input_shape=1,224,224,3 \
+  --input_array=input \
+  --output_array=final_result \
+  --mean_value=128 \
+  --std_value=128 
+
+ 
+  toco \
+  --input_file=tmp/mobilenet.pb \
+  --output_file=/tmp/mobilenetquantized.pb \
+  --input_format=TENSORFLOW_GRAPHDEF \
+  --output_format=TENSORFLOW_GRAPHDEF \
+  --inference_type=QUANTIZED_UINT8 \
+  --input_shape=1,224,224,3 \
+  --input_array=input \
+  --output_array=final_result \
+  --default_ranges_min=0 \
+  --default_ranges_max=6 \
+  --mean_value=127.5 \
+  --std_value=127.5
+ 
+ 
+ 
+优化pb模型  https://github.com/tensorflow/tensorflow/tree/master/tensorflow/tools/graph_transforms
+删除了在推理过程中没有调用的所有节点，将总是常量的表达式压缩到单个节点中，并优化了在批量标准化过程中使用的一些乘法运算。
+bazel build tensorflow/tools/graph_transforms:transform_graph
+bazel-bin/tensorflow/tools/graph_transforms/transform_graph \
+--in_graph=tmp/mobilenet.pb \
+--out_graph=tmp/mobilenetOptimized.pb \
+--inputs='input' \
+--outputs='final_result' \
+--transforms='
+  strip_unused_nodes(type=float, shape="1,224,224,3")
+  remove_nodes(op=Identity, op=CheckNumerics)
+  fold_constants(ignore_errors=true)
+  fold_batch_norms
+  fold_old_batch_norms'
+  
+bazel run tensorflow/tools/graph_transforms:transform_graph --
+--in_graph=frozen_model.pb\
+--out_graph=frozen_model2.pb \
+--inputs='Mul'\
+--outputs='softmax'\
+--transforms='
+  strip_unused_nodes(type=float, shape="1,299,299,3")
+  fold_constants(ignore_errors=true)
+  fold_batch_norms
+  fold_old_batch_norms'
+  
+缩小模型大小
+量化
+bazel-bin/tensorflow/tools/graph_transforms/transform_graph \
+  --in_graph=tmp/mobilenet.pb \
+  --inputs='input' \
+  --outputs="final_result" --out_graph=tmp/mobilenetquantized.pb \
+  --transforms='add_default_attributes strip_unused_nodes(type=float, shape="1,224,224,3")
+    remove_nodes(op=Identity, op=CheckNumerics) fold_constants(ignore_errors=false)
+    fold_batch_norms fold_old_batch_norms quantize_weights quantize_nodes
+    strip_unused_nodes sort_by_execution_order'
+
+
+bazel-bin/tensorflow/tools/graph_transforms/transform_graph \
+--in_graph=tmp/frozen_graph.pb \
+--out_graph=tmp/quantized_graph2.pb \
+--inputs='input' \
+--outputs='MobilenetV1/Predictions/Reshape_1' \
+--transforms='
+  add_default_attributes 
+  quantize_weights
+  quantize_nodes'
+
+bazel build tensorflow/tools/graph_transforms:transform_graph
+bazel-bin/tensorflow/tools/graph_transforms/transform_graph \
+--in_graph=tmp/optimized_graph.pb \
+--out_graph=tmp/quantized_retrained_graph.pb \
+--inputs='input' \
+--outputs='final_result' \
+--transforms='
+  add_default_attributes
+  strip_unused_nodes(type=float, shape="1,224,224,3")
+  remove_nodes(op=Identity, op=CheckNumerics)
+  fold_constants(ignore_errors=true)
+  fold_batch_norms
+  fold_old_batch_norms
+  quantize_weights
+  quantize_nodes
+  strip_unused_nodes
+  sort_by_execution_order'
+  
+bazel-bin/tensorflow/tools/graph_transforms/transform_graph \
+--in_graph=tmp/retrained_graph.pb \
+--out_graph=tmp/optimized_graph.pb \
+--inputs='input' \
+--outputs='final_result' \
+--transforms='
+  strip_unused_nodes(type=float, shape="1,299,299,3")
+  remove_nodes(op=Identity, op=CheckNumerics)
+  fold_constants(ignore_errors=true)
+  fold_batch_norms
+  fold_old_batch_norms'
+
+  
+bazel-bin/tensorflow/tools/graph_transforms/transform_graph \
+--in_graph=tmp/retrained_graph.pb \
+--out_graph=tmp/optimized_graph.pb \
+--inputs='input' \
+--outputs='final_result' \
+--transforms='
+  add_default_attributes
+  strip_unused_nodes(type=float, shape="1,299,299,3")
+  remove_nodes(op=Identity, op=CheckNumerics)
+  fold_constants(ignore_errors=true)
+  fold_batch_norms
+  fold_old_batch_norms
+  quantize_weights
+  quantize_nodes
+  strip_unused_nodes
+  sort_by_execution_order'
