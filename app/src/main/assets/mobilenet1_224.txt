@@ -1,0 +1,15 @@
+bag
+building
+car
+cat
+dog
+flower
+food
+fruit
+glasses
+grass
+mountain
+ocean
+pets
+restaurant
+ship
